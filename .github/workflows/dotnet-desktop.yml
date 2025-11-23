@@ -1,0 +1,45 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"   # example: v1.0.0 triggers release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release
+
+    - name: Publish App
+      run: dotnet publish ./src/ArchiveExtractor/ArchiveExtractor.csproj -c Release -o ./publish-win-x64 -r win-x64 --self-contained false
+
+    - name: Zip Artifacts
+      run: Compress-Archive -Path ./publish-win-x64/* -Destination ./ArchiveExtractor.zip
+      shell: pwsh
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Release-Build
+        path: ArchiveExtractor.zip
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ github.ref_name }}
+        files: ArchiveExtractor.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
