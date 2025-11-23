@@ -5,6 +5,7 @@ using SharpCompress.Archives.SevenZip;
 using SharpCompress.Archives.Rar;
 using SharpCompress.Archives.GZip;
 using SharpCompress.Readers;
+using SharpCompress.Common;
 
 namespace ArchiveExtractor;
 
@@ -19,11 +20,12 @@ public static class Archive
     /// </summary>
     /// <param name="filePath">The path to the archive file.</param>
     /// <param name="archiveType">The type of archive. Use ArchiveType.Auto to detect automatically.</param>
+    /// <param name="password">Optional password for encrypted archives.</param>
     /// <returns>An IArchiveReader to read and extract the archive.</returns>
     /// <exception cref="ArgumentException">Thrown when filePath is null or empty.</exception>
     /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
     /// <exception cref="NotSupportedException">Thrown when the archive format is not supported.</exception>
-    public static IArchiveReader Open(string filePath, ArchiveType archiveType = ArchiveType.Auto)
+    public static IArchiveReader Open(string filePath, ArchiveType archiveType = ArchiveType.Auto, string? password = null)
     {
         if (string.IsNullOrWhiteSpace(filePath))
             throw new ArgumentException("File path cannot be null or empty.", nameof(filePath));
@@ -31,30 +33,35 @@ public static class Archive
         if (!File.Exists(filePath))
             throw new FileNotFoundException("Archive file not found.", filePath);
 
-        IArchive archive;
-
         if (archiveType == ArchiveType.Auto)
         {
             archiveType = DetectArchiveType(filePath);
         }
 
+        FileStream fs = File.OpenRead(filePath);
+        var options = new ReaderOptions { LeaveStreamOpen = false };
+        if (!string.IsNullOrEmpty(password))
+            options.Password = password;
+
+        IArchive archive;
         try
         {
             archive = archiveType switch
             {
-                ArchiveType.Zip => ZipArchive.Open(filePath),
-                ArchiveType.Tar => TarArchive.Open(filePath),
-                ArchiveType.TarGz => TarArchive.Open(filePath),
-                ArchiveType.TarBz2 => TarArchive.Open(filePath),
-                ArchiveType.SevenZip => SevenZipArchive.Open(filePath),
-                ArchiveType.Rar => RarArchive.Open(filePath),
-                ArchiveType.GZip => GZipArchive.Open(filePath),
-                ArchiveType.BZip2 => ArchiveFactory.Open(filePath),
-                _ => ArchiveFactory.Open(filePath)
+                ArchiveType.Zip => ZipArchive.Open(fs, options),
+                ArchiveType.Tar => TarArchive.Open(fs, options),
+                ArchiveType.TarGz => TarArchive.Open(fs, options),
+                ArchiveType.TarBz2 => TarArchive.Open(fs, options),
+                ArchiveType.SevenZip => SevenZipArchive.Open(fs, options),
+                ArchiveType.Rar => RarArchive.Open(fs, options),
+                ArchiveType.GZip => GZipArchive.Open(fs, options),
+                ArchiveType.BZip2 => ArchiveFactory.Open(fs, options),
+                _ => ArchiveFactory.Open(fs, options)
             };
         }
         catch (Exception ex)
         {
+            fs.Dispose();
             throw new NotSupportedException($"Unable to open archive: {ex.Message}", ex);
         }
 
@@ -66,13 +73,18 @@ public static class Archive
     /// </summary>
     /// <param name="stream">The stream containing the archive data.</param>
     /// <param name="archiveType">The type of archive. Use ArchiveType.Auto to detect automatically.</param>
+    /// <param name="password">Optional password for encrypted archives.</param>
     /// <returns>An IArchiveReader to read and extract the archive.</returns>
     /// <exception cref="ArgumentNullException">Thrown when stream is null.</exception>
     /// <exception cref="NotSupportedException">Thrown when the archive format is not supported.</exception>
-    public static IArchiveReader Open(Stream stream, ArchiveType archiveType = ArchiveType.Auto)
+    public static IArchiveReader Open(Stream stream, ArchiveType archiveType = ArchiveType.Auto, string? password = null)
     {
         if (stream == null)
             throw new ArgumentNullException(nameof(stream));
+
+        var options = new ReaderOptions { LeaveStreamOpen = false };
+        if (!string.IsNullOrEmpty(password))
+            options.Password = password;
 
         IArchive archive;
 
@@ -80,16 +92,16 @@ public static class Archive
         {
             archive = archiveType switch
             {
-                ArchiveType.Auto => ArchiveFactory.Open(stream),
-                ArchiveType.Zip => ZipArchive.Open(stream),
-                ArchiveType.Tar => TarArchive.Open(stream),
-                ArchiveType.TarGz => TarArchive.Open(stream),
-                ArchiveType.TarBz2 => TarArchive.Open(stream),
-                ArchiveType.SevenZip => SevenZipArchive.Open(stream),
-                ArchiveType.Rar => RarArchive.Open(stream),
-                ArchiveType.GZip => GZipArchive.Open(stream),
-                ArchiveType.BZip2 => ArchiveFactory.Open(stream),
-                _ => ArchiveFactory.Open(stream)
+                ArchiveType.Auto => ArchiveFactory.Open(stream, options),
+                ArchiveType.Zip => ZipArchive.Open(stream, options),
+                ArchiveType.Tar => TarArchive.Open(stream, options),
+                ArchiveType.TarGz => TarArchive.Open(stream, options),
+                ArchiveType.TarBz2 => TarArchive.Open(stream, options),
+                ArchiveType.SevenZip => SevenZipArchive.Open(stream, options),
+                ArchiveType.Rar => RarArchive.Open(stream, options),
+                ArchiveType.GZip => GZipArchive.Open(stream, options),
+                ArchiveType.BZip2 => ArchiveFactory.Open(stream, options),
+                _ => ArchiveFactory.Open(stream, options)
             };
         }
         catch (Exception ex)
@@ -107,15 +119,17 @@ public static class Archive
     /// <param name="destinationDirectory">The directory where files will be extracted.</param>
     /// <param name="overwrite">Whether to overwrite existing files.</param>
     /// <param name="archiveType">The type of archive. Use ArchiveType.Auto to detect automatically.</param>
+    /// <param name="password">Optional password for encrypted archives.</param>
     /// <exception cref="ArgumentException">Thrown when paths are null or empty.</exception>
     /// <exception cref="FileNotFoundException">Thrown when the archive file does not exist.</exception>
     public static void ExtractToDirectory(
         string archiveFilePath,
         string destinationDirectory,
         bool overwrite = false,
-        ArchiveType archiveType = ArchiveType.Auto)
+        ArchiveType archiveType = ArchiveType.Auto,
+        string? password = null)
     {
-        using var reader = Open(archiveFilePath, archiveType);
+        using var reader = Open(archiveFilePath, archiveType, password);
         reader.ExtractToDirectory(destinationDirectory, overwrite);
     }
 
@@ -124,14 +138,16 @@ public static class Archive
     /// </summary>
     /// <param name="archiveFilePath">The path to the archive file.</param>
     /// <param name="archiveType">The type of archive. Use ArchiveType.Auto to detect automatically.</param>
+    /// <param name="password">Optional password for encrypted archives.</param>
     /// <returns>An enumerable of archive entries.</returns>
     /// <exception cref="ArgumentException">Thrown when filePath is null or empty.</exception>
     /// <exception cref="FileNotFoundException">Thrown when the file does not exist.</exception>
     public static IEnumerable<IArchiveEntry> ListEntries(
         string archiveFilePath,
-        ArchiveType archiveType = ArchiveType.Auto)
+        ArchiveType archiveType = ArchiveType.Auto,
+        string? password = null)
     {
-        using var reader = Open(archiveFilePath, archiveType);
+        using var reader = Open(archiveFilePath, archiveType, password);
         return reader.Entries.ToList();
     }
 

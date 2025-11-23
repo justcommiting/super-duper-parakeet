@@ -1,5 +1,7 @@
 using SharpCompress.Archives;
 using SharpCompress.Common;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
 
 namespace ArchiveExtractor;
 
@@ -45,10 +47,63 @@ internal class ArchiveReader : IArchiveReader
             Overwrite = overwrite
         };
 
-        foreach (var entry in _archive.Entries.Where(e => !e.IsDirectory))
+        var entries = _archive.Entries.Where(e => !e.IsDirectory).ToList();
+
+        // Try parallel extraction for maximum throughput, fall back to sequential if it fails.
+        try
         {
-            entry.WriteToDirectory(destinationDirectory, options);
+            ExtractEntriesInParallel(entries, destinationDirectory, overwrite);
         }
+        catch
+        {
+            // Sequential fallback
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    entry.WriteToDirectory(destinationDirectory, options);
+                }
+                catch
+                {
+                    // continue extracting other entries; individual errors are ignored here
+                }
+            }
+        }
+    }
+
+    private void ExtractEntriesInParallel(IEnumerable<SharpCompress.Archives.IArchiveEntry> entries, string destinationDirectory, bool overwrite)
+    {
+        var list = entries.ToList();
+        var exceptions = new ConcurrentBag<Exception>();
+
+        var maxWorkers = Math.Clamp(Environment.ProcessorCount * 2, 1, 64);
+        var po = new ParallelOptions { MaxDegreeOfParallelism = maxWorkers };
+
+        Parallel.ForEach(list, po, entry =>
+        {
+            try
+            {
+                var destPath = Path.Combine(destinationDirectory, entry.Key.Replace('/', Path.DirectorySeparatorChar));
+                var dir = Path.GetDirectoryName(destPath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+
+                if (File.Exists(destPath) && !overwrite)
+                    return; // skip
+
+                // Use asynchronous/sequential-optimized file stream for faster writes on many systems
+                using var entryStream = entry.OpenEntryStream();
+                using var outFs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                entryStream.CopyTo(outFs);
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+        });
+
+        if (!exceptions.IsEmpty)
+            throw new AggregateException(exceptions);
     }
 
     public void ExtractEntry(IArchiveEntry entry, string destinationPath, bool overwrite = false)
@@ -75,7 +130,8 @@ internal class ArchiveReader : IArchiveReader
             throw new IOException($"File already exists: {destinationPath}");
 
         using var entryStream = entry.OpenEntryStream();
-        using var fileStream = File.Create(destinationPath);
+        // Use buffered write for performance
+        using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.SequentialScan);
         entryStream.CopyTo(fileStream);
     }
 
