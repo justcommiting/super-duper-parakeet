@@ -1,9 +1,10 @@
 name: Build & Release
-
 on:
+  workflow_dispatch:
   push:
     tags:
-      - "v*"   # example: v1.0.0 triggers release
+      - "v*"
+
 
 jobs:
   build:
